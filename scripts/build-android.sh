@@ -37,11 +37,23 @@ for ABI in arm64-v8a armeabi-v7a; do
     -DCMAKE_BUILD_TYPE=Release \
     -DSDL_SHARED=ON -DSDL_STATIC=OFF \
     -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF \
+    -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384" \
     -DCMAKE_INSTALL_PREFIX="$STAGE/$ABI"
   cmake --build "$BUILD" --parallel
   cmake --install "$BUILD"
   [ -f "$STAGE/$ABI/lib/libSDL3.so" ] || { echo "FAIL: $ABI libSDL3.so missing"; exit 1; }
   [ -f "$STAGE/$ABI/lib/cmake/SDL3/SDL3Config.cmake" ] || { echo "FAIL: $ABI cmake package config missing"; exit 1; }
+done
+
+# 16 KB page sizes (runtime phase11 P11.1): Google Play requires 16 KB-aligned
+# 64-bit libraries from API 35. The flags above make it explicit for BOTH ABIs
+# (harmless on 32-bit: alignment is a multiple of the 4 KB page); this assert
+# makes the artifact unable to ship misaligned regardless of the NDK's defaults.
+OBJDUMP=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/llvm-objdump | head -1)
+for ABI in arm64-v8a armeabi-v7a; do
+  MIN=$("$OBJDUMP" -p "$STAGE/$ABI/lib/libSDL3.so" | grep -E '^\s*LOAD' | grep -Eo 'align 2\*\*[0-9]+' | grep -Eo '[0-9]+$' | sort -un | head -1)
+  [ -n "$MIN" ] && [ "$MIN" -ge 14 ] || { echo "FAIL: $ABI libSDL3.so LOAD align 2**${MIN:-none} < 16 KB"; exit 1; }
+  echo "16 KB check: $ABI libSDL3.so min LOAD align 2**$MIN"
 done
 
 # Each .so must be the machine it claims (the fleet is mixed-ABI; a wrong-arch lib
@@ -50,7 +62,7 @@ file "$STAGE/arm64-v8a/lib/libSDL3.so" | grep -q 'aarch64' || { echo "FAIL: arm6
 file "$STAGE/armeabi-v7a/lib/libSDL3.so" | grep -qE 'ARM(,| )' || { echo "FAIL: armeabi-v7a .so is not 32-bit ARM"; exit 1; }
 
 { echo "source-commit: $(git -C "$SRC" rev-parse HEAD)"
-  echo "config: Release shared per-ABI (arm64-v8a, armeabi-v7a), android-24, c++_static"
+  echo "config: Release shared per-ABI (arm64-v8a, armeabi-v7a), android-24, c++_static, 16 KB max-page-size (both ABIs, asserted)"
   echo "note: Java classes must come from the SAME SDL commit (the runtime's submodule pin)"
 } > "$STAGE/MANIFEST.txt"
 
