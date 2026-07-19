@@ -29,8 +29,10 @@ cmake --install "$BUILD"
 
 [ -f "$STAGE/lib/libSDL3.a" ] || { echo "FAIL: libSDL3.a missing after install"; exit 1; }
 [ -f "$STAGE/lib/cmake/SDL3/SDL3Config.cmake" ] || { echo "FAIL: cmake package config missing"; exit 1; }
-grep -q 'CMAKE_SYSTEM_NAME:STATIC=Emscripten\|CMAKE_SYSTEM_NAME.*Emscripten' "$BUILD/CMakeCache.txt" \
-  || { echo "FAIL: build was not an Emscripten cross-compile"; exit 1; }
+# CMAKE_SYSTEM_NAME is not a CACHE variable — the cached proof of an emscripten
+# cross-compile is the toolchain file emcmake injected.
+grep -q 'CMAKE_TOOLCHAIN_FILE:FILEPATH=.*Emscripten\.cmake' "$BUILD/CMakeCache.txt" \
+  || { echo "FAIL: build was not an Emscripten cross-compile (no Emscripten toolchain in the cache)"; exit 1; }
 
 { echo "source-commit: $(git -C "$SRC" rev-parse HEAD)"
   echo "config: Release static wasm (emscripten: $(emcc --version | head -1))"
