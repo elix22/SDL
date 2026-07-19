@@ -365,3 +365,73 @@ jobs:
           else
             gh release upload "$TAG" out/sdl3-android-Release.tar.gz --repo "$GITHUB_REPOSITORY"
           fi
+
+  build-emscripten:
+    name: Build Emscripten (wasm static, publish-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout scripts (main)
+        uses: actions/checkout@v4
+
+      - name: Read pinned SDL commit
+        id: pin
+        shell: bash
+        run: |
+          SHA=$(tr -d '[:space:]' < scripts/PINNED_COMMIT)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:9}" >> "$GITHUB_OUTPUT"
+
+      # Debug-loop economy: a pushed script tweak must not rebuild artifacts that are
+      # already published and immutable — probe the release first and no-op the job.
+      - name: Skip if this artifact is already published (immutable)
+        id: published
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="prebuilt-${{ steps.pin.outputs.short }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "sdl3-emscripten-Release.tar.gz"; then
+            echo "sdl3-emscripten-Release.tar.gz already published for $TAG — skipping the build"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout pinned SDL source
+        if: steps.published.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pin.outputs.sha }}
+          path: sdl-src
+
+      - name: Set up emsdk
+        if: steps.published.outputs.skip != 'true'
+        uses: mymindstorm/setup-emsdk@v15
+
+      - name: Build
+        if: steps.published.outputs.skip != 'true'
+        shell: bash
+        run: bash scripts/build-emscripten.sh sdl-src out
+
+      - name: Upload build artifact (90-day convenience copy)
+        if: steps.published.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdl3-emscripten-Release
+          path: out/sdl3-emscripten-Release.tar.gz
+          retention-days: 90
+
+      - name: Publish to release (permanent)
+        if: steps.published.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="prebuilt-${{ steps.pin.outputs.short }}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "SDL3 prebuilt ($TAG)" \
+              --notes "Prebuilt SDL3 libraries at pinned commit ${{ steps.pin.outputs.sha }}. Release config only. Produced by build-sdl.yml."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "sdl3-emscripten-Release.tar.gz"; then
+            echo "already published — keeping the pinned bytes"
+          else
+            gh release upload "$TAG" out/sdl3-emscripten-Release.tar.gz --repo "$GITHUB_REPOSITORY"
+          fi
