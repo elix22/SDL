@@ -60,5 +60,61 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "SDL3 prebuilt ($TAG)" \
               --notes "Prebuilt SDL3 libraries at pinned commit ${{ steps.pin.outputs.sha }}. Release config only. Produced by build-sdl.yml."
-          gh release upload "$TAG" out/sdl3-macos-universal-Release.tar.gz \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          # Pinned artifacts are IMMUTABLE: the runtime pins this asset's sha256 in its
+          # lock file, and a re-upload (new timestamps = new bytes) would break every
+          # clone that fetched the pin. First publish wins; delete the asset by hand
+          # only when deliberately republishing (then re-pin the lock).
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "sdl3-macos-universal-Release.tar.gz"; then
+            echo "sdl3-macos-universal-Release.tar.gz already published for $TAG — keeping the pinned bytes, skipping upload"
+          else
+            gh release upload "$TAG" out/sdl3-macos-universal-Release.tar.gz --repo "$GITHUB_REPOSITORY"
+          fi
+
+  build-ios:
+    name: Build iOS (static device+simulator, xcframework)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout scripts (main)
+        uses: actions/checkout@v4
+
+      - name: Read pinned SDL commit
+        id: pin
+        run: |
+          SHA=$(tr -d '[:space:]' < scripts/PINNED_COMMIT)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:9}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned SDL source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pin.outputs.sha }}
+          path: sdl-src
+
+      - name: Build
+        run: bash scripts/build-ios.sh sdl-src out
+
+      - name: Upload build artifact (90-day convenience copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdl3-ios-static-Release
+          path: out/sdl3-ios-static-Release.tar.gz
+          retention-days: 90
+
+      - name: Publish to release (permanent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="prebuilt-${{ steps.pin.outputs.short }}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "SDL3 prebuilt ($TAG)" \
+              --notes "Prebuilt SDL3 libraries at pinned commit ${{ steps.pin.outputs.sha }}. Release config only. Produced by build-sdl.yml."
+          # Pinned artifacts are IMMUTABLE: the runtime pins this asset's sha256 in its
+          # lock file, and a re-upload (new timestamps = new bytes) would break every
+          # clone that fetched the pin. First publish wins; delete the asset by hand
+          # only when deliberately republishing (then re-pin the lock).
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' | grep -qx "sdl3-ios-static-Release.tar.gz"; then
+            echo "sdl3-ios-static-Release.tar.gz already published for $TAG — keeping the pinned bytes, skipping upload"
+          else
+            gh release upload "$TAG" out/sdl3-ios-static-Release.tar.gz --repo "$GITHUB_REPOSITORY"
+          fi
