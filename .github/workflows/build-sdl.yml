@@ -1,0 +1,64 @@
+# Build SDL3 prebuilt libraries for the threejs-native-runtime SDK (phase 9).
+#
+# Builds the PINNED commit (scripts/PINNED_COMMIT), not main's head: the consuming
+# runtime validates against that exact SDL commit, and its Android Java layer must match
+# the .so it ships. Bumping SDL = updating the pin here and the lock file there together.
+#
+# Artifacts are published to a GitHub RELEASE (tag prebuilt-<shortsha>) — Releases are
+# permanent; Actions artifacts expire at 90 days and are uploaded only as a convenience.
+# All builds are Release configuration (runtime directive: no Debug libraries).
+name: Build SDL3 Libraries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/build-sdl.yml'
+
+permissions:
+  contents: write   # gh release create/upload
+
+jobs:
+  build-macos:
+    name: Build macOS (universal static)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout scripts (main)
+        uses: actions/checkout@v4
+
+      - name: Read pinned SDL commit
+        id: pin
+        run: |
+          SHA=$(tr -d '[:space:]' < scripts/PINNED_COMMIT)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA:0:9}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned SDL source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pin.outputs.sha }}
+          path: sdl-src
+
+      - name: Build
+        run: bash scripts/build-macos.sh sdl-src out
+
+      - name: Upload build artifact (90-day convenience copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdl3-macos-universal-Release
+          path: out/sdl3-macos-universal-Release.tar.gz
+          retention-days: 90
+
+      - name: Publish to release (permanent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="prebuilt-${{ steps.pin.outputs.short }}"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "SDL3 prebuilt ($TAG)" \
+              --notes "Prebuilt SDL3 libraries at pinned commit ${{ steps.pin.outputs.sha }}. Release config only. Produced by build-sdl.yml."
+          gh release upload "$TAG" out/sdl3-macos-universal-Release.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --clobber
