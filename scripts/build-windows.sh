@@ -27,7 +27,10 @@ cmake --build "$BUILD" --config Release --parallel
 cmake --install "$BUILD" --config Release
 
 [ -f "$STAGE/lib/SDL3-static.lib" ] || { echo "FAIL: SDL3-static.lib missing after install"; exit 1; }
-[ -f "$STAGE/lib/cmake/SDL3/SDL3Config.cmake" ] || { echo "FAIL: cmake package config missing"; exit 1; }
+# SDL's CMake package lands at <prefix>/cmake on Windows (not lib/cmake/SDL3 as on
+# Unix) — accept either, the consumer's find_package handles both.
+[ -f "$STAGE/cmake/SDL3Config.cmake" ] || [ -f "$STAGE/lib/cmake/SDL3/SDL3Config.cmake" ] \
+  || { echo "FAIL: cmake package config missing"; exit 1; }
 
 { echo "source-commit: $(git -C "$SRC" rev-parse HEAD)"
   echo "config: Release static x64 (MSVC, newest VS on the runner)"
